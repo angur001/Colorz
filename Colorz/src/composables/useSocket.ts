@@ -2,6 +2,7 @@ import { ref, onMounted, onUnmounted, type Ref } from 'vue';
 import { Socket, io } from 'socket.io-client';
 
 interface UseSocketReturn {
+    socket: Ref<Socket | null>;
     isConnected: Ref<boolean>;
     lastMessage: Ref<any>;
     sendMessage: (message: any) => void;
@@ -44,6 +45,7 @@ export function useSocket(): UseSocketReturn {
   };
 
   return {
+    socket: socket,
     isConnected: isConnected,
     lastMessage: lastMessage,
     sendMessage
