@@ -1,6 +1,7 @@
-<script setup lang="ts">
+<script setup>
+import SocketTest from './components/SocketTest.vue';
 </script>
 
-<template>
-    <p> Hello World </p>
+<template>  
+  <SocketTest />
 </template>
