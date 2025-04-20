@@ -184,14 +184,14 @@ function handleSubmitGuess(socket, data) {
 
 // Create a new session
 function handleCreateSession(socket, data) {
-  const { sessionKey } = data;
+  const { sessionKey, username } = data;
   
   // Create a new session with the host
   sessions.set(sessionKey, {
     host: socket.id,
     players: [{
       id: socket.id,
-      name: `Player ${socket.id.substr(0, 4)}`,
+      name: username || `Player ${socket.id.substr(0, 4)}`,
       isHost: true
     }],
     color: null,
@@ -202,7 +202,7 @@ function handleCreateSession(socket, data) {
   // Join the socket to the session room
   socket.join(sessionKey);
   
-  console.log(`Session created: ${sessionKey} by ${socket.id}`);
+  console.log(`Session created: ${sessionKey} by ${socket.id} (${username})`);
   
   // Notify the client
   io.to(sessionKey).emit('player_joined', {
@@ -213,7 +213,7 @@ function handleCreateSession(socket, data) {
 
 // Join an existing session
 function handleJoinSession(socket, data) {
-  const { sessionKey, isHost } = data;
+  const { sessionKey, isHost, username } = data;
   
   // Check if session exists
   if (!sessions.has(sessionKey)) {
@@ -232,15 +232,21 @@ function handleJoinSession(socket, data) {
   if (!playerExists) {
     session.players.push({
       id: socket.id,
-      name: `Player ${socket.id.substr(0, 4)}`,
+      name: username || `Player ${socket.id.substr(0, 4)}`,
       isHost: isHost
     });
+  } else {
+    // Update existing player's username if needed
+    const playerIndex = session.players.findIndex(p => p.id === socket.id);
+    if (playerIndex !== -1 && username) {
+      session.players[playerIndex].name = username;
+    }
   }
   
   // Join the socket to the session room
   socket.join(sessionKey);
   
-  console.log(`Player ${socket.id} joined session: ${sessionKey}`);
+  console.log(`Player ${socket.id} (${username}) joined session: ${sessionKey}`);
   
   // Notify all clients in the session
   io.to(sessionKey).emit('player_joined', {

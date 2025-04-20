@@ -6,8 +6,10 @@
       <div class="players-list" v-if="players.length > 0">
         <h4>Players:</h4>
         <ul>
-          <li v-for="player in players" :key="player.id">
-            {{ player.name }} {{ player.isHost ? '(Host)' : '' }}
+          <li v-for="player in players" :key="player.id" class="player-item">
+            <span class="player-name">{{ player.name }}</span>
+            <span v-if="player.isHost" class="host-badge">Host</span>
+            <span v-if="player.id === socket?.id" class="you-badge">You</span>
             <span v-if="playerScores[player.id]" class="player-score">Score: {{ playerScores[player.id] }}</span>
           </li>
         </ul>
@@ -131,9 +133,14 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(player, index) in sortedPlayers" :key="player.id" :class="{ 'current-player': player.id === socket?.id }">
+          <tr v-for="(player, index) in sortedPlayers" :key="player.id" 
+              :class="{ 'current-player': player.id === socket?.id }">
             <td>{{ index + 1 }}</td>
-            <td>{{ player.name }} {{ player.isHost ? '(Host)' : '' }}</td>
+            <td>
+              {{ player.name }}
+              <span v-if="player.id === socket?.id" class="you-text"> (You) </span>
+              <span v-if="player.isHost" class="host-text"> (Host) </span>
+            </td>
             <td>{{ player.score }}</td>
           </tr>
         </tbody>
@@ -158,6 +165,7 @@ const { socket, sendMessage } = useSocket();
 // Session information
 const sessionKey = ref(route.params.id as string || '');
 const isHost = ref(route.query.host === 'true');
+const username = ref(route.query.username as string || localStorage.getItem('colorz-username') || 'Anonymous');
 const players = ref<Array<{id: string, name: string, isHost: boolean}>>([]);
 
 // Game settings
@@ -486,7 +494,8 @@ onMounted(() => {
       sendMessage({
         type: 'join_session',
         sessionKey: sessionKey.value,
-        isHost: isHost.value
+        isHost: isHost.value,
+        username: username.value
       });
     }
   }
@@ -494,7 +503,29 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* Add these new styles for the new components */
+/* Game container and layout */
+.color-game {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  font-family: Arial, sans-serif;
+}
+
+.game-title {
+  text-align: center;
+  color: #333;
+  margin-bottom: 30px;
+}
+
+/* Session info styles */
+.session-info {
+  background-color: white;
+  padding: 15px;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  margin-bottom: 20px;
+}
+
 .game-status {
   display: flex;
   justify-content: space-between;
@@ -503,6 +534,52 @@ onMounted(() => {
   border-top: 1px solid #eee;
 }
 
+/* Players list styles */
+.players-list {
+  margin-top: 15px;
+}
+
+.players-list ul {
+  list-style-type: none;
+  padding: 0;
+}
+
+.player-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.player-name {
+  font-weight: 500;
+  margin-right: 8px;
+}
+
+.host-badge, .you-badge, .player-score {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  margin-left: 5px;
+  display: inline-block;
+}
+
+.host-badge {
+  background-color: #4ecdc4;
+  color: white;
+}
+
+.you-badge {
+  background-color: #ff6b6b;
+  color: white;
+}
+
+.player-score {
+  background-color: #f0f0f0;
+  color: #555;
+}
+
+/* Game setup styles */
 .game-setup {
   background-color: white;
   padding: 25px;
@@ -557,19 +634,7 @@ onMounted(() => {
   height: 0;
 }
 
-.slider {
-  position: relative; /* Change from absolute to relative */
-  width: 100%;
-  margin: 10px 0;
-  -webkit-appearance: none;
-  appearance: none;
-  height: 10px;
-  border-radius: 5px;
-  background: #d3d3d3;
-  outline: none;
-}
-
-/* Make sure the toggle switch slider still uses absolute positioning */
+/* Toggle switch slider */
 .switch .slider {
   position: absolute;
   cursor: pointer;
@@ -579,9 +644,11 @@ onMounted(() => {
   bottom: 0;
   background-color: #ccc;
   transition: .4s;
+  height: auto;
+  margin: 0;
 }
 
-.slider:before {
+.switch .slider:before {
   position: absolute;
   content: "";
   height: 26px;
@@ -612,6 +679,86 @@ input:checked + .slider:before {
   border-radius: 50%;
 }
 
+/* Range slider styles */
+input[type="range"].slider {
+  position: relative;
+  width: 100%;
+  margin: 10px 0;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 10px;
+  border-radius: 5px;
+  background: #d3d3d3;
+  outline: none;
+}
+
+/* Range slider thumbs */
+input[type="range"].slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #4CAF50;
+  cursor: pointer;
+}
+
+input[type="range"].slider::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #4CAF50;
+  cursor: pointer;
+}
+
+.red-slider::-webkit-slider-thumb {
+  background: #ff5252 !important;
+}
+
+.green-slider::-webkit-slider-thumb {
+  background: #4CAF50 !important;
+}
+
+.blue-slider::-webkit-slider-thumb {
+  background: #2196F3 !important;
+}
+
+.red-slider::-moz-range-thumb {
+  background: #ff5252 !important;
+}
+
+.green-slider::-moz-range-thumb {
+  background: #4CAF50 !important;
+}
+
+.blue-slider::-moz-range-thumb {
+  background: #2196F3 !important;
+}
+
+/* Button styles */
+button {
+  padding: 12px 25px;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 20px 0;
+  gap: 15px;
+}
+
+.submit-btn, .new-game-btn {
+  min-width: 200px;
+  text-align: center;
+}
+
 .start-game-btn {
   background-color: #4CAF50;
   color: white;
@@ -628,6 +775,31 @@ input:checked + .slider:before {
   background-color: #3d8b40;
 }
 
+.submit-btn {
+  background-color: #45b7d8;
+  color: white;
+}
+
+.submit-btn:hover {
+  background-color: #3aa8c9;
+}
+
+.new-game-btn {
+  background-color: #4CAF50;
+  color: white;
+}
+
+.new-game-btn:hover {
+  background-color: #3d8b40;
+}
+
+button:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* Waiting setup styles */
 .waiting-setup {
   background-color: #f8f9fa;
   padding: 30px;
@@ -642,6 +814,14 @@ input:checked + .slider:before {
   color: #666;
 }
 
+.waiting-message {
+  color: #666;
+  font-style: italic;
+  text-align: center;
+  margin-top: 10px;
+}
+
+/* Leaderboard styles */
 .leaderboard {
   background-color: white;
   padding: 25px;
@@ -699,74 +879,42 @@ input:checked + .slider:before {
   background-color: #3d8b40;
 }
 
-.player-score {
-  float: right;
-  background-color: #f0f0f0;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 0.8rem;
-  color: #555;
+/* Badge styles for leaderboard */
+.you-text, .host-text {
+  font-size: 0.85rem;
+  margin-left: 5px;
 }
 
-/* Add these missing styles for the game area */
-.color-game {
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 20px;
-  font-family: Arial, sans-serif;
+.you-text {
+  color: #ff6b6b;
+  font-weight: 600;
 }
 
-.game-title {
-  text-align: center;
-  color: #333;
-  margin-bottom: 30px;
+.host-text {
+  color: #4ecdc4;
+  font-weight: 600;
 }
 
-.session-info {
-  background-color: white;
-  padding: 15px;
-  border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-  margin-bottom: 20px;
-}
-
-.players-list {
-  margin-top: 15px;
-}
-
-.players-list ul {
-  list-style-type: none;
-  padding: 0;
-}
-
-.players-list li {
-  padding: 8px 0;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.game-area {
-  background-color: white;
-  padding: 25px;
-  border-radius: 12px;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
-}
-
+/* Game area styles */
 .color-displays {
   display: flex;
   justify-content: space-between;
   margin-bottom: 30px;
+  flex-wrap: wrap;
+  gap: 20px;
 }
 
 .target-color, .user-color {
   flex: 1;
+  min-width: 200px;
   text-align: center;
-  padding: 0 15px;
 }
 
 .color-box {
-  height: 120px;
+  width: 100%;
+  height: 150px;
   border-radius: 8px;
-  margin: 10px 0;
+  margin-bottom: 10px;
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
 }
 
@@ -776,73 +924,12 @@ input:checked + .slider:before {
 
 .slider-container {
   margin-bottom: 15px;
-  background-color: #f8f9fa;
-  padding: 15px;
-  border-radius: 8px;
-}
-
-.slider-container label {
-  display: block;
-  margin-bottom: 10px;
-  font-weight: 600;
 }
 
 .slider-preview {
-  height: 10px;
-  border-radius: 5px;
-  margin-bottom: 10px;
-}
-
-.slider {
-  width: 100%;
-  margin: 10px 0;
-  -webkit-appearance: none;
-  height: 10px;
-  border-radius: 5px;
-  background: #d3d3d3;
-  outline: none;
-}
-
-.slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: #4CAF50;
-  cursor: pointer;
-}
-
-.slider::-moz-range-thumb {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: #4CAF50;
-  cursor: pointer;
-}
-
-.red-slider::-webkit-slider-thumb {
-  background: #ff5252;
-}
-
-.green-slider::-webkit-slider-thumb {
-  background: #4CAF50;
-}
-
-.blue-slider::-webkit-slider-thumb {
-  background: #2196F3;
-}
-
-.red-slider::-moz-range-thumb {
-  background: #ff5252;
-}
-
-.green-slider::-moz-range-thumb {
-  background: #4CAF50;
-}
-
-.blue-slider::-moz-range-thumb {
-  background: #2196F3;
+  height: 8px;
+  border-radius: 4px;
+  margin-bottom: 5px;
 }
 
 .slider-range {
@@ -852,56 +939,7 @@ input:checked + .slider:before {
   color: #666;
 }
 
-.controls {
-  display: flex;
-  justify-content: center;
-  gap: 15px;
-  margin-bottom: 20px;
-  align-items: center;
-}
-
-.submit-btn, .new-game-btn {
-  padding: 12px 25px;
-  border: none;
-  border-radius: 6px;
-  font-size: 1rem;
-  cursor: pointer;
-  transition: background-color 0.3s;
-}
-
-.submit-btn {
-  background-color: #2196F3;
-  color: white;
-}
-
-.submit-btn:hover {
-  background-color: #0b7dda;
-}
-
-.submit-btn:disabled {
-  background-color: #cccccc;
-  cursor: not-allowed;
-}
-
-.new-game-btn {
-  background-color: #ff9800;
-  color: white;
-}
-
-.new-game-btn:hover {
-  background-color: #e68a00;
-}
-
-.new-game-btn:disabled {
-  background-color: #cccccc;
-  cursor: not-allowed;
-}
-
-.waiting-message {
-  font-style: italic;
-  color: #666;
-}
-
+/* Result styles */
 .result {
   text-align: center;
   padding: 15px;
@@ -922,5 +960,17 @@ input:checked + .slider:before {
 .low-score {
   background-color: #ffebee;
   border-left: 5px solid #f44336;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .color-displays {
+    flex-direction: column;
+  }
+  
+  .game-status {
+    flex-direction: column;
+    gap: 5px;
+  }
 }
 </style>

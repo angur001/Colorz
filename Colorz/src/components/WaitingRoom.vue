@@ -20,6 +20,7 @@
           <li v-for="player in players" :key="player.id" class="player-item">
             <span class="player-name">{{ player.name }}</span>
             <span v-if="player.isHost" class="host-badge">Host</span>
+            <span v-if="player.id === socket?.id" class="you-badge">(You)</span>
           </li>
         </ul>
       </div>
@@ -50,6 +51,7 @@ const { socket, sendMessage } = useSocket();
 
 const sessionKey = ref(route.params.id as string);
 const isHost = ref(route.query.host === 'true');
+const username = ref(route.query.username as string || localStorage.getItem('colorz-username') || 'Anonymous');
 const players = ref<Array<{id: string, name: string, isHost: boolean}>>([]);
 const copied = ref(false);
 
@@ -62,41 +64,43 @@ const copySessionKey = () => {
   }, 2000);
 };
 
-// Start the game for all players
+// Start the game (host only)
 const startGame = () => {
-  if (isHost.value) {
-    sendMessage({
-      type: 'start_game',
-      sessionKey: sessionKey.value
-    });
-    
-    router.push(`/game/${sessionKey.value}?host=true`);
-  }
+  if (!isHost.value) return;
+  
+  sendMessage({
+    type: 'start_game',
+    sessionKey: sessionKey.value
+  });
+  
+  // Navigate to game with username
+  router.push(`/game/${sessionKey.value}?host=true&username=${encodeURIComponent(username.value)}`);
 };
 
+// Join the waiting room
 onMounted(() => {
-  if (socket.value) {
-    // Listen for player joined events
-    socket.value.on('player_joined', (data) => {
-      if (data.sessionKey === sessionKey.value) {
-        players.value = data.players;
-      }
-    });
-    
-    // Listen for game start event
-    socket.value.on('game_started', (data) => {
-      if (data.sessionKey === sessionKey.value && !isHost.value) {
-        router.push(`/game/${sessionKey.value}`);
-      }
-    });
-    
-    // Join the session
+  if (sessionKey.value) {
     sendMessage({
-      type: 'join_session',
+      type: 'join_waiting_room',
       sessionKey: sessionKey.value,
-      isHost: isHost.value
+      isHost: isHost.value,
+      username: username.value
     });
   }
+  
+  // Listen for player updates
+  socket.value?.on('player_joined', (data) => {
+    if (data.sessionKey === sessionKey.value) {
+      players.value = data.players;
+    }
+  });
+  
+  // Listen for game start
+  socket.value?.on('game_started', (data) => {
+    if (data.sessionKey === sessionKey.value) {
+      router.push(`/game/${sessionKey.value}?host=${isHost.value}&username=${encodeURIComponent(username.value)}`);
+    }
+  });
 });
 </script>
 
@@ -104,18 +108,15 @@ onMounted(() => {
 .waiting-room {
   max-width: 800px;
   margin: 0 auto;
-  padding: 30px;
+  padding: 30px 20px;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  background-color: #f8f9fa;
-  border-radius: 15px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
 }
 
 .room-title {
   text-align: center;
-  color: #333;
   font-size: 2rem;
   margin-bottom: 30px;
+  color: #333;
   position: relative;
 }
 
@@ -126,28 +127,28 @@ onMounted(() => {
   left: 50%;
   transform: translateX(-50%);
   width: 100px;
-  height: 4px;
-  background: linear-gradient(90deg, #ff6b6b, #4ecdc4, #45b7d8);
+  height: 3px;
+  background: linear-gradient(90deg, #4ecdc4, #45b7d8);
   border-radius: 2px;
 }
 
 .session-info {
-  display: flex;
-  flex-direction: column;
-  gap: 25px;
+  background-color: white;
+  border-radius: 15px;
+  padding: 30px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
 }
 
 .share-key {
-  background-color: white;
-  padding: 20px;
-  border-radius: 10px;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+  margin-bottom: 30px;
   text-align: center;
 }
 
 .share-key h3 {
   margin-top: 0;
   color: #333;
+  font-size: 1.5rem;
+  margin-bottom: 15px;
 }
 
 .key-display {
@@ -159,22 +160,23 @@ onMounted(() => {
 }
 
 .key {
-  font-size: 2rem;
-  font-weight: bold;
-  letter-spacing: 3px;
-  color: #45b7d8;
-  background-color: #f0f8ff;
-  padding: 10px 20px;
+  background-color: #f8f9fa;
+  padding: 12px 20px;
   border-radius: 8px;
-  border: 2px dashed #45b7d8;
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #333;
+  letter-spacing: 1px;
+  border: 1px dashed #ccc;
 }
 
 .copy-btn {
   background-color: #45b7d8;
   color: white;
   border: none;
-  padding: 8px 15px;
-  border-radius: 5px;
+  border-radius: 8px;
+  padding: 10px 15px;
+  font-weight: 600;
   cursor: pointer;
   transition: background-color 0.3s;
 }
@@ -184,15 +186,12 @@ onMounted(() => {
 }
 
 .players-container {
-  background-color: white;
-  padding: 20px;
-  border-radius: 10px;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+  margin-bottom: 30px;
 }
 
 .players-container h3 {
-  margin-top: 0;
   color: #333;
+  font-size: 1.5rem;
   margin-bottom: 15px;
 }
 
@@ -225,45 +224,53 @@ onMounted(() => {
 .host-badge {
   background-color: #4ecdc4;
   color: white;
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: 4px 10px;
+  border-radius: 20px;
   font-size: 0.8rem;
   font-weight: 600;
+}
+
+.you-badge {
+  background-color: #ff6b6b;
+  color: white;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-left: 8px;
 }
 
 .controls {
   display: flex;
   justify-content: center;
-  margin-top: 10px;
+  margin-top: 30px;
 }
 
 .start-btn {
-  background-color: #4ecdc4;
+  background-color: #4CAF50;
   color: white;
   border: none;
-  padding: 12px 30px;
   border-radius: 8px;
+  padding: 12px 30px;
   font-size: 1.1rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.3s;
+  transition: background-color 0.3s;
 }
 
 .start-btn:hover {
-  background-color: #3dbeb6;
-  transform: translateY(-3px);
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
+  background-color: #3d8b40;
 }
 
 .start-btn:disabled {
   background-color: #cccccc;
   cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
 }
 
 .waiting-message {
-  color: #666;
   font-style: italic;
+  color: #666;
+  text-align: center;
+  font-size: 1.1rem;
 }
 </style>
