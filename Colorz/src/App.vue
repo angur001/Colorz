@@ -1,32 +1,28 @@
 <script setup>
-import SocketTest from './components/SocketTest.vue';
-import ColorGame from './components/ColorGame.vue';
+import { RouterView } from 'vue-router';
 </script>
 
 <template>
   <main>
-    <ColorGame />
+    <router-view></router-view>
   </main>
   
   <footer>
-    <SocketTest />
+    <p>© 2023 Color Matching Game</p>
   </footer>
 </template>
 
 <style scoped>
-header {
-  background-color: #f5f5f5;
-  padding: 20px;
-  text-align: center;
-}
-
 main {
   padding: 20px;
+  min-height: 90vh;
 }
 
 footer {
   margin-top: 40px;
   border-top: 1px solid #eee;
-  padding-top: 20px;
+  padding: 20px;
+  text-align: center;
+  color: #666;
 }
 </style>

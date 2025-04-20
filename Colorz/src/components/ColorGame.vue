@@ -1,5 +1,18 @@
 <template>
   <div class="color-game">
+    <div class="session-info" v-if="sessionKey">
+      <h3>Session: {{ sessionKey }}</h3>
+      <p v-if="isHost">Share this key with friends to join your game</p>
+      <div class="players-list" v-if="players.length > 0">
+        <h4>Players:</h4>
+        <ul>
+          <li v-for="player in players" :key="player.id">
+            {{ player.name }} {{ player.isHost ? '(Host)' : '' }}
+          </li>
+        </ul>
+      </div>
+    </div>
+    
     <h2 class="game-title">Color Matching Challenge</h2>
     
     <div class="game-area">
@@ -51,7 +64,17 @@
       
       <div class="controls">
         <button @click="submitGuess" :disabled="showResult" class="submit-btn">Submit</button>
-        <button @click="newGame" :disabled="!showResult" class="new-game-btn">New Game</button>
+        <button 
+          v-if="isHost" 
+          @click="newGame" 
+          :disabled="!showResult" 
+          class="new-game-btn"
+        >
+          Start New Round
+        </button>
+        <p v-if="!isHost && showResult" class="waiting-message">
+          Waiting for host to start a new round...
+        </p>
       </div>
       
       <div v-if="showResult" class="result" :class="{ 'high-score': score >= 90, 'medium-score': score >= 70 && score < 90, 'low-score': score < 70 }">
@@ -64,10 +87,16 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
+import { useRoute } from 'vue-router';
 import { useSocket } from '../composables/useSocket';
 
-// Socket connection for multiplayer features (optional)
+const route = useRoute();
 const { socket, sendMessage } = useSocket();
+
+// Session information
+const sessionKey = ref(route.params.id as string || '');
+const isHost = ref(route.query.host === 'true');
+const players = ref<Array<{id: string, name: string, isHost: boolean}>>([]);
 
 // User's color values
 const red = ref(128);
@@ -99,10 +128,11 @@ const generateRandomColor = () => {
   targetGreen.value = Math.floor(Math.random() * 256);
   targetBlue.value = Math.floor(Math.random() * 256);
   
-  // Optionally send the new color to the server
-  if (socket.value) {
+  // Send the new color to the server for the session
+  if (socket.value && sessionKey.value && isHost.value) {
     sendMessage({
-      type: 'new_game',
+      type: 'update_session_color',
+      sessionKey: sessionKey.value,
       color: {
         r: targetRed.value,
         g: targetGreen.value,
@@ -149,6 +179,7 @@ const submitGuess = () => {
   if (socket.value) {
     sendMessage({
       type: 'submit_guess',
+      sessionKey: sessionKey.value,
       userColor: {
         r: red.value,
         g: green.value,
@@ -175,13 +206,117 @@ const newGame = () => {
   feedbackMessage.value = '';
 };
 
-// Initialize the game on component mount
+// Listen for socket events related to sessions
 onMounted(() => {
-  newGame();
+  // Set up session-related socket listeners
+  if (socket.value) {
+    // Player joined event
+    socket.value.on('player_joined', (data) => {
+      if (data.sessionKey === sessionKey.value) {
+        players.value = data.players;
+        
+        // If host, send current color to new players
+        if (isHost.value) {
+          sendMessage({
+            type: 'update_session_color',
+            sessionKey: sessionKey.value,
+            color: {
+              r: targetRed.value,
+              g: targetGreen.value,
+              b: targetBlue.value
+            }
+          });
+        }
+      }
+    });
+    
+    // Session color update (for non-host players)
+    socket.value.on('session_color_update', (data) => {
+      if (data.sessionKey === sessionKey.value && !isHost.value) {
+        targetRed.value = data.color.r;
+        targetGreen.value = data.color.g;
+        targetBlue.value = data.color.b;
+        
+        // Reset game state for non-host players when host starts a new round
+        showResult.value = false;
+        score.value = 0;
+        feedbackMessage.value = '';
+        
+        // Reset sliders to middle values
+        red.value = 128;
+        green.value = 128;
+        blue.value = 128;
+      }
+    });
+    
+    // Initial game data
+    socket.value.on('game_started', (data) => {
+      if (data.sessionKey === sessionKey.value) {
+        targetRed.value = data.initialColor.r;
+        targetGreen.value = data.initialColor.g;
+        targetBlue.value = data.initialColor.b;
+      }
+    });
+    
+    // Join the session
+    if (sessionKey.value) {
+      sendMessage({
+        type: 'join_session',
+        sessionKey: sessionKey.value,
+        isHost: isHost.value
+      });
+    }
+  }
+  
+  // Initialize the game
+  if (isHost.value) {
+    // Host will generate a new color
+    newGame();
+  } else {
+    // Non-host players will wait for color from server
+    // Just reset the user's sliders
+    red.value = 128;
+    green.value = 128;
+    blue.value = 128;
+  }
 });
 </script>
 
 <style scoped>
+/* Add these new styles */
+.session-info {
+  background-color: white;
+  padding: 15px;
+  border-radius: 10px;
+  margin-bottom: 20px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+  border-left: 5px solid #45b7d8;
+}
+
+.session-info h3 {
+  margin-top: 0;
+  color: #333;
+}
+
+.players-list {
+  margin-top: 10px;
+}
+
+.players-list h4 {
+  margin-bottom: 5px;
+  color: #555;
+}
+
+.players-list ul {
+  list-style-type: none;
+  padding-left: 0;
+}
+
+.players-list li {
+  padding: 5px 0;
+  border-bottom: 1px solid #eee;
+}
+
 .color-game {
   max-width: 800px;
   margin: 0 auto;
@@ -420,6 +555,17 @@ button:disabled {
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
+}
+
+.waiting-message {
+  color: #666;
+  font-style: italic;
+  text-align: center;
+  margin: 10px 0;
+  padding: 8px 15px;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  border-left: 3px solid #45b7d8;
 }
 
 .result {
