@@ -29,12 +29,22 @@ io.on('connection', (socket) => {
       handleCreateSession(socket, data);
     } else if (data.type === 'join_session') {
       handleJoinSession(socket, data);
-    } else if (data.type === 'start_game') {
-      handleStartGame(socket, data);
+    } else if (data.type === 'game_settings') {
+      handleGameSettings(socket, data);
     } else if (data.type === 'update_session_color') {
       handleUpdateSessionColor(socket, data);
     } else if (data.type === 'submit_guess') {
       handleSubmitGuess(socket, data);
+    } else if (data.type === 'new_round') {
+      handleNewRound(socket, data);
+    } else if (data.type === 'show_leaderboard') {
+      handleShowLeaderboard(socket, data);
+    } else if (data.type === 'reset_game') {
+      handleResetGame(socket, data);
+    } else if (data.type === 'update_scores') {
+      handleUpdateScores(socket, data);
+    } else if (data.type === 'start_game') {
+      handleStartGame(socket, data);
     } else {
       // Broadcast regular messages to all clients
       io.emit('message', data);
@@ -46,6 +56,131 @@ io.on('connection', (socket) => {
     handlePlayerDisconnect(socket);
   });
 });
+
+// Handle game settings update
+function handleGameSettings(socket, data) {
+  const { sessionKey, totalRounds, hardMode, currentRound } = data;
+  
+  // Check if session exists
+  if (!sessions.has(sessionKey)) return;
+  
+  // Update session settings
+  const session = sessions.get(sessionKey);
+  session.totalRounds = totalRounds;
+  session.hardMode = hardMode;
+  if (currentRound) {
+    session.currentRound = currentRound;
+  }
+  
+  // Broadcast to all clients in the session
+  io.to(sessionKey).emit('game_settings', data);
+}
+
+// Handle new round
+function handleNewRound(socket, data) {
+  const { sessionKey, currentRound } = data;
+  
+  // Check if session exists
+  if (!sessions.has(sessionKey)) return;
+  
+  const session = sessions.get(sessionKey);
+  
+  // Check if the sender is the host
+  const player = session.players.find(p => p.id === socket.id);
+  if (!player || !player.isHost) return;
+  
+  // Update session round
+  session.currentRound = currentRound;
+  
+  // Broadcast to all clients in the session
+  io.to(sessionKey).emit('new_round', data);
+}
+
+// Handle show leaderboard
+function handleShowLeaderboard(socket, data) {
+  const { sessionKey, playerScores } = data;
+  
+  // Check if session exists
+  if (!sessions.has(sessionKey)) return;
+  
+  const session = sessions.get(sessionKey);
+  
+  // Check if the sender is the host
+  const player = session.players.find(p => p.id === socket.id);
+  if (!player || !player.isHost) return;
+  
+  // Update session scores
+  session.playerScores = playerScores;
+  
+  // Broadcast to all clients in the session
+  io.to(sessionKey).emit('show_leaderboard', data);
+}
+
+// Handle reset game
+function handleResetGame(socket, data) {
+  const { sessionKey } = data;
+  
+  // Check if session exists
+  if (!sessions.has(sessionKey)) return;
+  
+  const session = sessions.get(sessionKey);
+  
+  // Check if the sender is the host
+  const player = session.players.find(p => p.id === socket.id);
+  if (!player || !player.isHost) return;
+  
+  // Reset session game state
+  session.currentRound = 0;
+  session.playerScores = {};
+  
+  // Broadcast to all clients in the session
+  io.to(sessionKey).emit('reset_game', data);
+}
+
+// Handle update scores
+function handleUpdateScores(socket, data) {
+  const { sessionKey, playerScores } = data;
+  
+  // Check if session exists
+  if (!sessions.has(sessionKey)) return;
+  
+  const session = sessions.get(sessionKey);
+  
+  // Check if the sender is the host
+  const player = session.players.find(p => p.id === socket.id);
+  if (!player || !player.isHost) return;
+  
+  // Update session scores
+  session.playerScores = playerScores;
+  
+  // Broadcast to all clients in the session
+  io.to(sessionKey).emit('update_scores', data);
+}
+
+// Update the submit guess handler to track scores
+function handleSubmitGuess(socket, data) {
+  const { sessionKey, playerId, score, totalScore } = data;
+  
+  // Check if session exists
+  if (!sessions.has(sessionKey)) return;
+  
+  const session = sessions.get(sessionKey);
+  
+  // Update player score in session if needed
+  if (!session.playerScores) {
+    session.playerScores = {};
+  }
+  
+  session.playerScores[playerId] = totalScore;
+  
+  // Broadcast score update to all clients
+  io.to(sessionKey).emit('update_scores', {
+    sessionKey,
+    playerScores: session.playerScores
+  });
+  
+  console.log(`Player ${socket.id} submitted a guess with score: ${score}, total: ${totalScore}`);
+}
 
 // Create a new session
 function handleCreateSession(socket, data) {
@@ -59,7 +194,9 @@ function handleCreateSession(socket, data) {
       name: `Player ${socket.id.substr(0, 4)}`,
       isHost: true
     }],
-    color: null
+    color: null,
+    currentRound: 0,
+    playerScores: {}
   });
   
   // Join the socket to the session room
@@ -118,6 +255,16 @@ function handleJoinSession(socket, data) {
       color: session.color
     });
   }
+  
+  // Send current game state if game is in progress
+  if (session.currentRound > 0) {
+    socket.emit('game_settings', {
+      sessionKey,
+      totalRounds: session.totalRounds || 3,
+      hardMode: session.hardMode || false,
+      currentRound: session.currentRound
+    });
+  }
 }
 
 // Update the color for a session
@@ -141,12 +288,6 @@ function handleUpdateSessionColor(socket, data) {
     sessionKey,
     color
   });
-}
-
-// Handle player guess submission
-function handleSubmitGuess(socket, data) {
-  // You can implement leaderboard or scoring functionality here
-  console.log(`Player ${socket.id} submitted a guess with score: ${data.score}`);
 }
 
 // Handle player disconnect
@@ -201,11 +342,13 @@ function handleStartGame(socket, data) {
   };
   
   session.color = initialColor;
+  session.currentRound = 1;
   
   // Notify all clients that the game has started
   io.to(sessionKey).emit('game_started', {
     sessionKey,
-    initialColor
+    initialColor,
+    currentRound: 1
   });
   
   console.log(`Game started for session ${sessionKey}`);

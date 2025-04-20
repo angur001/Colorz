@@ -8,14 +8,48 @@
         <ul>
           <li v-for="player in players" :key="player.id">
             {{ player.name }} {{ player.isHost ? '(Host)' : '' }}
+            <span v-if="playerScores[player.id]" class="player-score">Score: {{ playerScores[player.id] }}</span>
           </li>
         </ul>
+      </div>
+      <div class="game-status">
+        <p>Round: {{ currentRound }} / {{ totalRounds }}</p>
+        <p>Mode: {{ hardMode ? 'Hard' : 'Easy' }}</p>
       </div>
     </div>
     
     <h2 class="game-title">Color Matching Challenge</h2>
     
-    <div class="game-area">
+    <!-- Game setup panel for host (only shown before first round) -->
+    <div v-if="isHost && currentRound === 0" class="game-setup">
+      <h3>Game Settings</h3>
+      <div class="setting-group">
+        <label>Number of Rounds:</label>
+        <select v-model.number="totalRounds">
+          <option v-for="n in 10" :key="n" :value="n">{{ n }}</option>
+        </select>
+      </div>
+      <div class="setting-group">
+        <label>Difficulty:</label>
+        <div class="toggle-container">
+          <span>Easy</span>
+          <label class="switch">
+            <input type="checkbox" v-model="hardMode">
+            <span class="slider round"></span>
+          </label>
+          <span>Hard</span>
+        </div>
+      </div>
+      <button @click="startGame" class="start-game-btn">Start Game</button>
+    </div>
+    
+    <!-- Waiting message for non-host players before game starts -->
+    <div v-if="!isHost && currentRound === 0" class="waiting-setup">
+      <p>Waiting for host to set up the game...</p>
+    </div>
+    
+    <!-- Game area (only shown during active rounds) -->
+    <div class="game-area" v-if="currentRound > 0 && !showLeaderboard">
       <div class="color-displays">
         <div class="target-color">
           <h3>Target Color</h3>
@@ -25,11 +59,13 @@
         
         <div class="user-color">
           <h3>Your Color</h3>
-          <div class="color-box" :style="{ backgroundColor: userColorRGB }"></div>
-          <p>{{ userColorRGB }}</p>
+          <div class="color-box" :style="{ backgroundColor: hardMode && !showResult ? 'gray' : userColorRGB }"></div>
+          <p v-if="!hardMode || showResult">{{ userColorRGB }}</p>
+          <p v-else>Hidden until submission</p>
         </div>
       </div>
       
+      <!-- Rest of the game UI remains the same -->
       <div class="sliders">
         <div class="slider-container red-container">
           <label>Red: {{ red }}</label>
@@ -66,20 +102,46 @@
         <button @click="submitGuess" :disabled="showResult" class="submit-btn">Submit</button>
         <button 
           v-if="isHost" 
-          @click="newGame" 
+          @click="nextRound" 
           :disabled="!showResult" 
           class="new-game-btn"
         >
-          Start New Round
+          {{ currentRound < totalRounds ? 'Next Round' : 'Show Results' }}
         </button>
         <p v-if="!isHost && showResult" class="waiting-message">
-          Waiting for host to start a new round...
+          Waiting for host to start next round...
         </p>
       </div>
       
       <div v-if="showResult" class="result" :class="{ 'high-score': score >= 90, 'medium-score': score >= 70 && score < 90, 'low-score': score < 70 }">
         <h3>Result: {{ score }}%</h3>
         <p>{{ feedbackMessage }}</p>
+      </div>
+    </div>
+    
+    <!-- Leaderboard (shown after all rounds) -->
+    <div v-if="showLeaderboard" class="leaderboard">
+      <h3>Final Results</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Player</th>
+            <th>Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(player, index) in sortedPlayers" :key="player.id" :class="{ 'current-player': player.id === socket?.id }">
+            <td>{{ index + 1 }}</td>
+            <td>{{ player.name }} {{ player.isHost ? '(Host)' : '' }}</td>
+            <td>{{ player.score }}</td>
+          </tr>
+        </tbody>
+      </table>
+      
+      <div class="leaderboard-controls">
+        <button v-if="isHost" @click="resetGame" class="reset-game-btn">Start New Game</button>
+        <p v-else class="waiting-message">Waiting for host to start a new game...</p>
       </div>
     </div>
   </div>
@@ -97,6 +159,13 @@ const { socket, sendMessage } = useSocket();
 const sessionKey = ref(route.params.id as string || '');
 const isHost = ref(route.query.host === 'true');
 const players = ref<Array<{id: string, name: string, isHost: boolean}>>([]);
+
+// Game settings
+const totalRounds = ref(3);
+const currentRound = ref(0);
+const hardMode = ref(false);
+const showLeaderboard = ref(false);
+const playerScores = ref<Record<string, number>>({});
 
 // User's color values
 const red = ref(128);
@@ -121,6 +190,36 @@ const userColorRGB = computed(() => {
 const targetColorRGB = computed(() => {
   return `rgb(${targetRed.value}, ${targetGreen.value}, ${targetBlue.value})`;
 });
+
+// Computed sorted players for leaderboard
+const sortedPlayers = computed(() => {
+  return [...players.value].map(player => ({
+    ...player,
+    score: playerScores.value[player.id] || 0
+  })).sort((a, b) => b.score - a.score);
+});
+
+// Start the game with current settings
+const startGame = () => {
+  if (!isHost.value) return;
+  
+  // Send game settings to all players
+  sendMessage({
+    type: 'game_settings',
+    sessionKey: sessionKey.value,
+    totalRounds: totalRounds.value,
+    hardMode: hardMode.value
+  });
+  
+  // Start the game
+  sendMessage({
+    type: 'start_game',
+    sessionKey: sessionKey.value
+  });
+  
+  // Update local state
+  currentRound.value = 1;
+};
 
 // Generate a random color
 const generateRandomColor = () => {
@@ -175,27 +274,52 @@ const submitGuess = () => {
   feedbackMessage.value = generateFeedback(score.value);
   showResult.value = true;
   
-  // Optionally send the result to the server
+  // Update player's score
+  if (socket.value?.id) {
+    const currentScore = playerScores.value[socket.value.id] || 0;
+    playerScores.value[socket.value.id] = currentScore + score.value;
+  }
+  
+  // Send the result to the server
   if (socket.value) {
     sendMessage({
       type: 'submit_guess',
       sessionKey: sessionKey.value,
+      playerId: socket.value.id,
       userColor: {
         r: red.value,
         g: green.value,
         b: blue.value
       },
-      score: score.value
+      score: score.value,
+      totalScore: playerScores.value[socket.value.id || ''] || 0
     });
   }
 };
 
-// Start a new game
-const newGame = () => {
+// Move to next round or show leaderboard
+const nextRound = () => {
+  if (!isHost.value) return;
+  
   // Reset user's sliders to middle values
   red.value = 128;
   green.value = 128;
   blue.value = 128;
+  
+  // Check if we've completed all rounds
+  if (currentRound.value >= totalRounds.value) {
+    // Show leaderboard
+    showLeaderboard.value = true;
+    
+    // Notify all players
+    sendMessage({
+      type: 'show_leaderboard',
+      sessionKey: sessionKey.value,
+      playerScores: playerScores.value
+    });
+    
+    return;
+  }
   
   // Generate a new target color
   generateRandomColor();
@@ -204,6 +328,32 @@ const newGame = () => {
   showResult.value = false;
   score.value = 0;
   feedbackMessage.value = '';
+  
+  // Increment round counter
+  currentRound.value++;
+  
+  // Notify all players about the new round
+  sendMessage({
+    type: 'new_round',
+    sessionKey: sessionKey.value,
+    currentRound: currentRound.value
+  });
+};
+
+// Reset the game for a new session
+const resetGame = () => {
+  if (!isHost.value) return;
+  
+  // Reset game state
+  currentRound.value = 0;
+  showLeaderboard.value = false;
+  playerScores.value = {};
+  
+  // Notify all players
+  sendMessage({
+    type: 'reset_game',
+    sessionKey: sessionKey.value
+  });
 };
 
 // Listen for socket events related to sessions
@@ -215,8 +365,16 @@ onMounted(() => {
       if (data.sessionKey === sessionKey.value) {
         players.value = data.players;
         
-        // If host, send current color to new players
-        if (isHost.value) {
+        // If host, send current game state to new players
+        if (isHost.value && currentRound.value > 0) {
+          sendMessage({
+            type: 'game_settings',
+            sessionKey: sessionKey.value,
+            totalRounds: totalRounds.value,
+            hardMode: hardMode.value,
+            currentRound: currentRound.value
+          });
+          
           sendMessage({
             type: 'update_session_color',
             sessionKey: sessionKey.value,
@@ -226,6 +384,27 @@ onMounted(() => {
               b: targetBlue.value
             }
           });
+          
+          // Send current scores
+          sendMessage({
+            type: 'update_scores',
+            sessionKey: sessionKey.value,
+            playerScores: playerScores.value
+          });
+        }
+      }
+    });
+    
+    // Game settings update
+    socket.value.on('game_settings', (data) => {
+      if (data.sessionKey === sessionKey.value && !isHost.value) {
+        totalRounds.value = data.totalRounds;
+        hardMode.value = data.hardMode;
+        
+        if (data.currentRound) {
+          currentRound.value = data.currentRound;
+        } else {
+          currentRound.value = 1; // Start first round for non-host players
         }
       }
     });
@@ -249,12 +428,56 @@ onMounted(() => {
       }
     });
     
+    // New round notification
+    socket.value.on('new_round', (data) => {
+      if (data.sessionKey === sessionKey.value && !isHost.value) {
+        currentRound.value = data.currentRound;
+      }
+    });
+    
+    // Score updates
+    socket.value.on('update_scores', (data) => {
+      if (data.sessionKey === sessionKey.value) {
+        playerScores.value = data.playerScores;
+      }
+    });
+    
+    // Show leaderboard
+    socket.value.on('show_leaderboard', (data) => {
+      if (data.sessionKey === sessionKey.value && !isHost.value) {
+        playerScores.value = data.playerScores;
+        showLeaderboard.value = true;
+      }
+    });
+    
+    // Reset game
+    socket.value.on('reset_game', (data) => {
+      if (data.sessionKey === sessionKey.value && !isHost.value) {
+        currentRound.value = 0;
+        showLeaderboard.value = false;
+        playerScores.value = {};
+      }
+    });
+    
     // Initial game data
     socket.value.on('game_started', (data) => {
       if (data.sessionKey === sessionKey.value) {
         targetRed.value = data.initialColor.r;
         targetGreen.value = data.initialColor.g;
         targetBlue.value = data.initialColor.b;
+        
+        // Update round information
+        currentRound.value = data.currentRound || 1;
+        
+        // Reset game state
+        showResult.value = false;
+        score.value = 0;
+        feedbackMessage.value = '';
+        
+        // Reset sliders to middle values
+        red.value = 128;
+        green.value = 128;
+        blue.value = 128;
       }
     });
     
@@ -267,353 +490,437 @@ onMounted(() => {
       });
     }
   }
-  
-  // Initialize the game
-  if (isHost.value) {
-    // Host will generate a new color
-    newGame();
-  } else {
-    // Non-host players will wait for color from server
-    // Just reset the user's sliders
-    red.value = 128;
-    green.value = 128;
-    blue.value = 128;
-  }
 });
 </script>
 
 <style scoped>
-/* Add these new styles */
-.session-info {
-  background-color: white;
-  padding: 15px;
-  border-radius: 10px;
-  margin-bottom: 20px;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
-  border-left: 5px solid #45b7d8;
+/* Add these new styles for the new components */
+.game-status {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #eee;
 }
 
-.session-info h3 {
+.game-setup {
+  background-color: white;
+  padding: 25px;
+  border-radius: 12px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+  margin-bottom: 30px;
+}
+
+.game-setup h3 {
   margin-top: 0;
   color: #333;
+  margin-bottom: 20px;
 }
 
-.players-list {
-  margin-top: 10px;
+.setting-group {
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
-.players-list h4 {
-  margin-bottom: 5px;
+.setting-group label {
+  font-weight: 600;
   color: #555;
 }
 
-.players-list ul {
-  list-style-type: none;
-  padding-left: 0;
-}
-
-.players-list li {
-  padding: 5px 0;
-  border-bottom: 1px solid #eee;
-}
-
-.color-game {
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 30px;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  background-color: #f8f9fa;
-  border-radius: 15px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-}
-
-.game-title {
-  text-align: center;
-  color: #333;
-  font-size: 2.2rem;
-  margin-bottom: 30px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  position: relative;
-}
-
-.game-title::after {
-  content: '';
-  position: absolute;
-  bottom: -10px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 100px;
-  height: 4px;
-  background: linear-gradient(90deg, #ff6b6b, #4ecdc4, #45b7d8);
-  border-radius: 2px;
-}
-
-.game-area {
-  display: flex;
-  flex-direction: column;
-  gap: 30px;
-}
-
-.color-displays {
-  display: flex;
-  justify-content: space-around;
-  margin-bottom: 20px;
-}
-
-.target-color, .user-color {
-  text-align: center;
-  padding: 20px;
-  border-radius: 12px;
+.setting-group select {
+  padding: 8px 15px;
+  border-radius: 6px;
+  border: 1px solid #ddd;
   background-color: white;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
-  transition: transform 0.3s ease;
+  font-size: 1rem;
 }
 
-.target-color:hover, .user-color:hover {
-  transform: translateY(-5px);
-}
-
-.target-color h3, .user-color h3 {
-  margin-top: 0;
-  color: #444;
-  font-size: 1.4rem;
-}
-
-.color-box {
-  width: 180px;
-  height: 180px;
-  border-radius: 12px;
-  border: none;
-  margin: 15px auto;
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
-  transition: all 0.3s ease;
-}
-
-.color-box:hover {
-  transform: scale(1.05);
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15);
-}
-
-.sliders {
+.toggle-container {
   display: flex;
-  flex-direction: column;
-  gap: 20px;
-  max-width: 600px;
-  margin: 0 auto;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Toggle switch */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 60px;
+  height: 34px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: relative; /* Change from absolute to relative */
   width: 100%;
+  margin: 10px 0;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 10px;
+  border-radius: 5px;
+  background: #d3d3d3;
+  outline: none;
+}
+
+/* Make sure the toggle switch slider still uses absolute positioning */
+.switch .slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: .4s;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 26px;
+  width: 26px;
+  left: 4px;
+  bottom: 4px;
+  background-color: white;
+  transition: .4s;
+}
+
+input:checked + .slider {
+  background-color: #2196F3;
+}
+
+input:focus + .slider {
+  box-shadow: 0 0 1px #2196F3;
+}
+
+input:checked + .slider:before {
+  transform: translateX(26px);
+}
+
+.slider.round {
+  border-radius: 34px;
+}
+
+.slider.round:before {
+  border-radius: 50%;
+}
+
+.start-game-btn {
+  background-color: #4CAF50;
+  color: white;
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.start-game-btn:hover {
+  background-color: #3d8b40;
+}
+
+.waiting-setup {
+  background-color: #f8f9fa;
+  padding: 30px;
+  border-radius: 12px;
+  text-align: center;
+  border-left: 5px solid #45b7d8;
+  margin-bottom: 30px;
+}
+
+.waiting-setup p {
+  font-size: 1.2rem;
+  color: #666;
+}
+
+.leaderboard {
   background-color: white;
   padding: 25px;
   border-radius: 12px;
   box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
 }
 
-.slider-container {
+.leaderboard h3 {
+  text-align: center;
+  margin-top: 0;
+  margin-bottom: 20px;
+  color: #333;
+  font-size: 1.8rem;
+}
+
+.leaderboard table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+}
+
+.leaderboard th, .leaderboard td {
+  padding: 12px 15px;
+  text-align: left;
+  border-bottom: 1px solid #eee;
+}
+
+.leaderboard th {
+  background-color: #f8f9fa;
+  font-weight: 600;
+  color: #333;
+}
+
+.leaderboard tr.current-player {
+  background-color: #e6f7ff;
+}
+
+.leaderboard-controls {
   display: flex;
-  flex-direction: column;
-  position: relative;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.reset-game-btn {
+  background-color: #4CAF50;
+  color: white;
+  padding: 12px 25px;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.reset-game-btn:hover {
+  background-color: #3d8b40;
+}
+
+.player-score {
+  float: right;
+  background-color: #f0f0f0;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  color: #555;
+}
+
+/* Add these missing styles for the game area */
+.color-game {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  font-family: Arial, sans-serif;
+}
+
+.game-title {
+  text-align: center;
+  color: #333;
+  margin-bottom: 30px;
+}
+
+.session-info {
+  background-color: white;
   padding: 15px;
   border-radius: 8px;
-  border-left: 5px solid;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  margin-bottom: 20px;
 }
 
-.red-container {
-  border-left-color: #ff6b6b;
-  background-color: rgba(255, 107, 107, 0.05);
+.players-list {
+  margin-top: 15px;
 }
 
-.green-container {
-  border-left-color: #4ecdc4;
-  background-color: rgba(78, 205, 196, 0.05);
+.players-list ul {
+  list-style-type: none;
+  padding: 0;
 }
 
-.blue-container {
-  border-left-color: #45b7d8;
-  background-color: rgba(69, 183, 216, 0.05);
+.players-list li {
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.game-area {
+  background-color: white;
+  padding: 25px;
+  border-radius: 12px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+}
+
+.color-displays {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 30px;
+}
+
+.target-color, .user-color {
+  flex: 1;
+  text-align: center;
+  padding: 0 15px;
+}
+
+.color-box {
+  height: 120px;
+  border-radius: 8px;
+  margin: 10px 0;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+}
+
+.sliders {
+  margin-bottom: 30px;
+}
+
+.slider-container {
+  margin-bottom: 15px;
+  background-color: #f8f9fa;
+  padding: 15px;
+  border-radius: 8px;
 }
 
 .slider-container label {
-  margin-bottom: 12px;
+  display: block;
+  margin-bottom: 10px;
   font-weight: 600;
-  color: #333;
-  font-size: 1.2rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
 }
 
 .slider-preview {
-  position: absolute;
-  right: 15px;
-  top: 15px;
-  width: 30px;
-  height: 30px;
+  height: 10px;
+  border-radius: 5px;
+  margin-bottom: 10px;
+}
+
+.slider {
+  width: 100%;
+  margin: 10px 0;
+  -webkit-appearance: none;
+  height: 10px;
+  border-radius: 5px;
+  background: #d3d3d3;
+  outline: none;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  background: #4CAF50;
+  cursor: pointer;
+}
+
+.slider::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #4CAF50;
+  cursor: pointer;
+}
+
+.red-slider::-webkit-slider-thumb {
+  background: #ff5252;
+}
+
+.green-slider::-webkit-slider-thumb {
+  background: #4CAF50;
+}
+
+.blue-slider::-webkit-slider-thumb {
+  background: #2196F3;
+}
+
+.red-slider::-moz-range-thumb {
+  background: #ff5252;
+}
+
+.green-slider::-moz-range-thumb {
+  background: #4CAF50;
+}
+
+.blue-slider::-moz-range-thumb {
+  background: #2196F3;
 }
 
 .slider-range {
   display: flex;
   justify-content: space-between;
-  margin-top: 5px;
-  color: #777;
-  font-size: 0.9rem;
-}
-
-input[type="range"] {
-  width: 100%;
-  height: 10px;
-  margin-top: 8px;
-  -webkit-appearance: none;
-  background: #e9ecef;
-  border-radius: 5px;
-  outline: none;
-  transition: background 0.3s;
-}
-
-input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-}
-
-.red-slider::-webkit-slider-thumb {
-  background: linear-gradient(to bottom, #ff6b6b, #ee5253);
-}
-
-.green-slider::-webkit-slider-thumb {
-  background: linear-gradient(to bottom, #4ecdc4, #26de81);
-}
-
-.blue-slider::-webkit-slider-thumb {
-  background: linear-gradient(to bottom, #45b7d8, #3867d6);
-}
-
-.red-slider::-webkit-slider-runnable-track {
-  background: linear-gradient(to right, #fff, #ff6b6b);
-  height: 10px;
-  border-radius: 5px;
-}
-
-.green-slider::-webkit-slider-runnable-track {
-  background: linear-gradient(to right, #fff, #4ecdc4);
-  height: 10px;
-  border-radius: 5px;
-}
-
-.blue-slider::-webkit-slider-runnable-track {
-  background: linear-gradient(to right, #fff, #45b7d8);
-  height: 10px;
-  border-radius: 5px;
+  font-size: 0.8rem;
+  color: #666;
 }
 
 .controls {
   display: flex;
   justify-content: center;
-  gap: 20px;
-  margin-top: 10px;
+  gap: 15px;
+  margin-bottom: 20px;
+  align-items: center;
 }
 
-button {
-  padding: 12px 28px;
-  font-size: 1.1rem;
+.submit-btn, .new-game-btn {
+  padding: 12px 25px;
   border: none;
-  border-radius: 8px;
+  border-radius: 6px;
+  font-size: 1rem;
   cursor: pointer;
-  font-weight: 600;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  transition: background-color 0.3s;
 }
 
 .submit-btn {
-  background-color: #4CAF50;
-  color: white;
-}
-
-.submit-btn:hover {
-  background-color: #3d8b40;
-  transform: translateY(-3px);
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
-}
-
-.new-game-btn {
   background-color: #2196F3;
   color: white;
 }
 
-.new-game-btn:hover {
+.submit-btn:hover {
   background-color: #0b7dda;
-  transform: translateY(-3px);
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
 }
 
-button:disabled {
+.submit-btn:disabled {
   background-color: #cccccc;
   cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
+}
+
+.new-game-btn {
+  background-color: #ff9800;
+  color: white;
+}
+
+.new-game-btn:hover {
+  background-color: #e68a00;
+}
+
+.new-game-btn:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
 }
 
 .waiting-message {
-  color: #666;
   font-style: italic;
-  text-align: center;
-  margin: 10px 0;
-  padding: 8px 15px;
-  background-color: #f8f9fa;
-  border-radius: 8px;
-  border-left: 3px solid #45b7d8;
+  color: #666;
 }
 
 .result {
   text-align: center;
+  padding: 15px;
+  border-radius: 8px;
   margin-top: 20px;
-  padding: 20px;
-  border-radius: 12px;
-  background-color: white;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
-  transition: all 0.3s ease;
 }
 
 .high-score {
-  background-color: #d4edda;
-  border-left: 5px solid #28a745;
+  background-color: #e8f5e9;
+  border-left: 5px solid #4CAF50;
 }
 
 .medium-score {
-  background-color: #fff3cd;
+  background-color: #fff8e1;
   border-left: 5px solid #ffc107;
 }
 
 .low-score {
-  background-color: #f8d7da;
-  border-left: 5px solid #dc3545;
-}
-
-.result h3 {
-  font-size: 1.5rem;
-  margin-top: 0;
-  color: #333;
-}
-
-.result p {
-  font-size: 1.1rem;
-  color: #555;
-}
-
-@media (max-width: 768px) {
-  .color-displays {
-    flex-direction: column;
-    align-items: center;
-    gap: 20px;
-  }
-  
-  .color-box {
-    width: 150px;
-    height: 150px;
-  }
+  background-color: #ffebee;
+  border-left: 5px solid #f44336;
 }
 </style>

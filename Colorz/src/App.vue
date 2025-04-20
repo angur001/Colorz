@@ -8,7 +8,7 @@ import { RouterView } from 'vue-router';
   </main>
   
   <footer>
-    <p>© 2023 Color Matching Game</p>
+    <p>© 2025 Color Matching Game</p>
   </footer>
 </template>
 
