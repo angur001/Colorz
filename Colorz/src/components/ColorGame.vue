@@ -171,6 +171,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useSocket } from '../composables/useSocket';
+import { useColorDifference } from '@/composables/useColorDifference';
 
 const route = useRoute();
 const { socket, sendMessage } = useSocket();
@@ -320,21 +321,7 @@ const generateRandomColor = () => {
   }
 };
 
-// Calculate the difference between two colors (0-100%)
-const calculateColorDifference = () => {
-  const redDiff = Math.abs(red.value - targetRed.value);
-  const greenDiff = Math.abs(green.value - targetGreen.value);
-  const blueDiff = Math.abs(blue.value - targetBlue.value);
-  
-  // Calculate the maximum possible difference (255 * 3)
-  const maxDiff = 255 * 3;
-  
-  // Calculate the actual difference
-  const actualDiff = redDiff + greenDiff + blueDiff;
-  
-  // Calculate the score (100% - percentage difference)
-  return Math.round(100 - (actualDiff / maxDiff * 100));
-};
+const { calculateColorDifference } = useColorDifference()
 
 // Generate feedback message based on score
 const generateFeedback = (scoreValue: number) => {
@@ -352,7 +339,18 @@ const submitGuess = () => {
   // Stop the timer when a guess is submitted
   stopTimer();
   
-  score.value = calculateColorDifference();
+  const playerColor = {
+    r: red.value,
+    g: green.value,
+    b: blue.value
+  };
+  const targetColor = {
+    r: targetRed.value,
+    g: targetGreen.value,
+    b: targetBlue.value
+  };
+
+  score.value = calculateColorDifference(playerColor, targetColor);
   feedbackMessage.value = generateFeedback(score.value);
   showResult.value = true;
   
