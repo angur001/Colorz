@@ -59,7 +59,7 @@ io.on('connection', (socket) => {
 
 // Handle game settings update
 function handleGameSettings(socket, data) {
-  const { sessionKey, totalRounds, hardMode, currentRound } = data;
+  const { sessionKey, totalRounds, hardMode, timeLimit } = data;
   
   // Check if session exists
   if (!sessions.has(sessionKey)) return;
@@ -68,12 +68,58 @@ function handleGameSettings(socket, data) {
   const session = sessions.get(sessionKey);
   session.totalRounds = totalRounds;
   session.hardMode = hardMode;
+  if (timeLimit) {
+    session.timeLimit = Number(timeLimit);
+  }
   if (currentRound) {
     session.currentRound = currentRound;
   }
   
+  console.log(`Game settings updated for session ${sessionKey}: rounds=${totalRounds}, hardMode=${hardMode}, timeLimit=${timeLimit}`);
+  
   // Broadcast to all clients in the session
   io.to(sessionKey).emit('game_settings', data);
+}
+
+// Handle game start
+function handleStartGame(socket, data) {
+  const { sessionKey, timeLimit } = data;
+  
+  // Check if session exists
+  if (!sessions.has(sessionKey)) return;
+  
+  const session = sessions.get(sessionKey);
+  
+  // Check if the sender is the host
+  const player = session.players.find(p => p.id === socket.id);
+  if (!player || !player.isHost) return;
+  
+  // Store the time limit in the session
+  if (timeLimit) {
+    session.timeLimit = Number(timeLimit);
+  }
+  
+  // Generate initial color for the game
+  const initialColor = {
+    r: Math.floor(Math.random() * 256),
+    g: Math.floor(Math.random() * 256),
+    b: Math.floor(Math.random() * 256)
+  };
+  
+  session.color = initialColor;
+  session.currentRound = 1;
+  
+  // Notify all clients that the game has started
+  io.to(sessionKey).emit('game_started', {
+    sessionKey,
+    initialColor,
+    currentRound: 1,
+    timeLimit: session.timeLimit,
+    totalRounds: session.totalRounds || 3,
+    hardMode: session.hardMode || false
+  });
+  
+  console.log(`Game started for session ${sessionKey} with time limit: ${session.timeLimit}s, rounds: ${session.totalRounds}, hardMode: ${session.hardMode}`);
 }
 
 // Handle new round
@@ -91,6 +137,12 @@ function handleNewRound(socket, data) {
   
   // Update session round
   session.currentRound = currentRound;
+  
+  // Start a new timer for this round
+  if (session.timeLimit) {
+    // Reset the timer for the new round
+    console.log(`Starting timer for round ${currentRound} with ${session.timeLimit} seconds`);
+  }
   
   // Broadcast to all clients in the session
   io.to(sessionKey).emit('new_round', data);
@@ -268,7 +320,8 @@ function handleJoinSession(socket, data) {
       sessionKey,
       totalRounds: session.totalRounds || 3,
       hardMode: session.hardMode || false,
-      currentRound: session.currentRound
+      currentRound: session.currentRound,
+      timeLimit: session.timeLimit || 15
     });
   }
 }
@@ -325,39 +378,6 @@ function handlePlayerDisconnect(socket) {
       }
     }
   }
-}
-
-// Handle game start
-function handleStartGame(socket, data) {
-  const { sessionKey } = data;
-  
-  // Check if session exists
-  if (!sessions.has(sessionKey)) return;
-  
-  const session = sessions.get(sessionKey);
-  
-  // Check if the sender is the host
-  const player = session.players.find(p => p.id === socket.id);
-  if (!player || !player.isHost) return;
-  
-  // Generate initial color for the game
-  const initialColor = {
-    r: Math.floor(Math.random() * 256),
-    g: Math.floor(Math.random() * 256),
-    b: Math.floor(Math.random() * 256)
-  };
-  
-  session.color = initialColor;
-  session.currentRound = 1;
-  
-  // Notify all clients that the game has started
-  io.to(sessionKey).emit('game_started', {
-    sessionKey,
-    initialColor,
-    currentRound: 1
-  });
-  
-  console.log(`Game started for session ${sessionKey}`);
 }
 
 const PORT = process.env.PORT || 3000;

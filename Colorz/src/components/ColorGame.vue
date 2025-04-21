@@ -499,7 +499,7 @@ onMounted(() => {
     
     // Session color update (for non-host players)
     socket.value.on('session_color_update', (data) => {
-      if (data.sessionKey === sessionKey.value && !isHost.value) {
+      if (data.sessionKey === sessionKey.value) {
         targetRed.value = data.color.r;
         targetGreen.value = data.color.g;
         targetBlue.value = data.color.b;
