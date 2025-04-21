@@ -17,6 +17,7 @@
       <div class="game-status">
         <p>Round: {{ currentRound }} / {{ totalRounds }}</p>
         <p>Mode: {{ hardMode ? 'Hard' : 'Easy' }}</p>
+        <p v-if="timeLimit > 0">Time: {{ timeRemaining }}s</p>
       </div>
     </div>
     
@@ -42,6 +43,13 @@
           <span>Hard</span>
         </div>
       </div>
+      <div class="setting-group">
+        <label>Time Limit per Round:</label>
+        <select v-model.number="timeLimit">
+          <option value="0">No Limit</option>
+          <option v-for="n in [5, 10, 15, 20, 30]" :key="n" :value="n">{{ n }} seconds</option>
+        </select>
+      </div>
       <button @click="startGame" class="start-game-btn">Start Game</button>
     </div>
     
@@ -52,6 +60,11 @@
     
     <!-- Game area (only shown during active rounds) -->
     <div class="game-area" v-if="currentRound > 0 && !showLeaderboard">
+      <!-- Timer bar (only shown when time limit is enabled) -->
+      <div v-if="timeLimit > 0" class="timer-bar-container">
+        <div class="timer-bar" :style="{ width: `${(timeRemaining / timeLimit) * 100}%`, backgroundColor: timerColor }"></div>
+      </div>
+      
       <div class="color-displays">
         <div class="target-color">
           <h3>Target Color</h3>
@@ -155,7 +168,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useSocket } from '../composables/useSocket';
 
@@ -169,9 +182,12 @@ const username = ref(route.query.username as string || localStorage.getItem('col
 const players = ref<Array<{id: string, name: string, isHost: boolean}>>([]);
 
 // Game settings
-const totalRounds = ref(3);
+const totalRounds = ref(Number(route.query.rounds) || Number(localStorage.getItem('colorz-game-rounds')) || 3);
+const hardMode = ref(route.query.hardMode === 'true' || localStorage.getItem('colorz-game-hardmode') === 'true');
 const currentRound = ref(0);
-const hardMode = ref(false);
+const timeLimit = ref(10); // 0 means no time limit
+const timeRemaining = ref(0);
+const timerInterval = ref<number | null>(null);
 const showLeaderboard = ref(false);
 const playerScores = ref<Record<string, number>>({});
 
@@ -199,6 +215,16 @@ const targetColorRGB = computed(() => {
   return `rgb(${targetRed.value}, ${targetGreen.value}, ${targetBlue.value})`;
 });
 
+// Computed timer color based on time remaining
+const timerColor = computed(() => {
+  if (timeLimit.value === 0) return '#4CAF50';
+  
+  const percentage = timeRemaining.value / timeLimit.value;
+  if (percentage > 0.6) return '#4CAF50'; // Green
+  if (percentage > 0.3) return '#FFC107'; // Yellow
+  return '#F44336'; // Red
+});
+
 // Computed sorted players for leaderboard
 const sortedPlayers = computed(() => {
   return [...players.value].map(player => ({
@@ -206,6 +232,43 @@ const sortedPlayers = computed(() => {
     score: playerScores.value[player.id] || 0
   })).sort((a, b) => b.score - a.score);
 });
+
+// Start the timer for the round
+const startTimer = () => {
+  // Clear any existing timer
+  if (timerInterval.value) {
+    clearInterval(timerInterval.value);
+    timerInterval.value = null;
+  }
+  
+  // If no time limit is set, don't start a timer
+  if (timeLimit.value <= 0) return;
+  
+  // Reset time remaining to the full time limit
+  timeRemaining.value = timeLimit.value;
+  
+  // Start the countdown
+  timerInterval.value = window.setInterval(() => {
+    if (timeRemaining.value <= 0) {
+      // Time's up - auto-submit the answer
+      if (!showResult.value) {
+        submitGuess();
+      }
+      clearInterval(timerInterval.value!);
+      timerInterval.value = null;
+    } else {
+      timeRemaining.value--;
+    }
+  }, 1000);
+};
+
+// Stop the timer
+const stopTimer = () => {
+  if (timerInterval.value) {
+    clearInterval(timerInterval.value);
+    timerInterval.value = null;
+  }
+};
 
 // Start the game with current settings
 const startGame = () => {
@@ -216,17 +279,25 @@ const startGame = () => {
     type: 'game_settings',
     sessionKey: sessionKey.value,
     totalRounds: totalRounds.value,
-    hardMode: hardMode.value
+    hardMode: hardMode.value,
+    timeLimit: timeLimit.value
   });
   
   // Start the game
   sendMessage({
     type: 'start_game',
-    sessionKey: sessionKey.value
+    sessionKey: sessionKey.value,
+    timeLimit: timeLimit.value
   });
   
   // Update local state
   currentRound.value = 1;
+  
+  // Generate the first color
+  generateRandomColor();
+  
+  // Start the timer for the first round
+  startTimer();
 };
 
 // Generate a random color
@@ -278,6 +349,9 @@ const generateFeedback = (scoreValue: number) => {
 
 // Submit the user's guess
 const submitGuess = () => {
+  // Stop the timer when a guess is submitted
+  stopTimer();
+  
   score.value = calculateColorDifference();
   feedbackMessage.value = generateFeedback(score.value);
   showResult.value = true;
@@ -340,6 +414,9 @@ const nextRound = () => {
   // Increment round counter
   currentRound.value++;
   
+  // Start the timer for the new round
+  startTimer();
+  
   // Notify all players about the new round
   sendMessage({
     type: 'new_round',
@@ -380,6 +457,7 @@ onMounted(() => {
             sessionKey: sessionKey.value,
             totalRounds: totalRounds.value,
             hardMode: hardMode.value,
+            timeLimit: timeLimit.value,
             currentRound: currentRound.value
           });
           
@@ -409,6 +487,10 @@ onMounted(() => {
         totalRounds.value = data.totalRounds;
         hardMode.value = data.hardMode;
         
+        if (data.timeLimit !== undefined) {
+          timeLimit.value = data.timeLimit;
+        }
+        
         if (data.currentRound) {
           currentRound.value = data.currentRound;
         } else {
@@ -433,6 +515,9 @@ onMounted(() => {
         red.value = 128;
         green.value = 128;
         blue.value = 128;
+        
+        // Start the timer for non-host players
+        startTimer();
       }
     });
     
@@ -440,6 +525,9 @@ onMounted(() => {
     socket.value.on('new_round', (data) => {
       if (data.sessionKey === sessionKey.value && !isHost.value) {
         currentRound.value = data.currentRound;
+        
+        // Start the timer for the new round
+        startTimer();
       }
     });
     
@@ -455,6 +543,9 @@ onMounted(() => {
       if (data.sessionKey === sessionKey.value && !isHost.value) {
         playerScores.value = data.playerScores;
         showLeaderboard.value = true;
+        
+        // Stop the timer when showing leaderboard
+        stopTimer();
       }
     });
     
@@ -464,6 +555,9 @@ onMounted(() => {
         currentRound.value = 0;
         showLeaderboard.value = false;
         playerScores.value = {};
+        
+        // Stop the timer when resetting the game
+        stopTimer();
       }
     });
     
@@ -477,6 +571,20 @@ onMounted(() => {
         // Update round information
         currentRound.value = data.currentRound || 1;
         
+        // Update time limit if provided
+        if (data.timeLimit !== undefined) {
+          timeLimit.value = data.timeLimit;
+        }
+        
+        // Update other settings if provided
+        if (data.totalRounds !== undefined) {
+          totalRounds.value = data.totalRounds;
+        }
+        
+        if (data.hardMode !== undefined) {
+          hardMode.value = data.hardMode;
+        }
+        
         // Reset game state
         showResult.value = false;
         score.value = 0;
@@ -486,6 +594,9 @@ onMounted(() => {
         red.value = 128;
         green.value = 128;
         blue.value = 128;
+        
+        // Start the timer for the first round
+        startTimer();
       }
     });
     
@@ -498,6 +609,18 @@ onMounted(() => {
         username: username.value
       });
     }
+  }
+});
+
+// Clean up timers when component is unmounted
+onUnmounted(() => {
+  stopTimer();
+});
+
+// Watch for changes in showResult to stop the timer when result is shown
+watch(showResult, (newValue) => {
+  if (newValue === true) {
+    stopTimer();
   }
 });
 </script>
@@ -973,4 +1096,20 @@ button:disabled {
     gap: 5px;
   }
 }
+
+/* Timer bar styles */
+.timer-bar-container {
+  width: 100%;
+  height: 8px;
+  background-color: #f0f0f0;
+  border-radius: 4px;
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+
+.timer-bar {
+  height: 100%;
+  transition: width 1s linear, background-color 1s;
+}
+
 </style>
