@@ -5,11 +5,14 @@ import { Socket, io } from 'socket.io-client';
 let socketInstance: Socket | null = null;
 const isConnectedRef = ref<boolean>(false);
 const lastMessageRef = ref<any>(null);
+const apiBaseUrl = import.meta.env.VITE_API_URL;
 
 // Initialize the socket connection once
 const initializeSocket = () => {
   if (!socketInstance) {
-    socketInstance = io('http://localhost:3000');
+    socketInstance = io(apiBaseUrl, {
+      transports: ['websocket', 'polling']  // ensure fallback
+    });
     
     socketInstance.on('connect', () => {
       isConnectedRef.value = true;
