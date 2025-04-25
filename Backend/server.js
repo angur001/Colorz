@@ -59,7 +59,7 @@ io.on('connection', (socket) => {
 
 // Handle game settings update
 function handleGameSettings(socket, data) {
-  const { sessionKey, totalRounds, hardMode, timeLimit } = data;
+  const { sessionKey, totalRounds, hardMode, timeLimit, currentRound } = data;
   
   // Check if session exists
   if (!sessions.has(sessionKey)) return;
